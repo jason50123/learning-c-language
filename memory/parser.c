@@ -1,197 +1,259 @@
-#include <windows.h>
-#include <stdio.h>
+﻿#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <tchar.h>
-#include <scsi.h>
+#include <scsi/scsi.h>
+#include <scsi/sg.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
 
 #define NAME_COUNT 25
 
+void FillRead16Command(struct sg_io_hdr *io_hdr, unsigned int lba, unsigned short sectorCount) {
+    u_int8_t sense_buffer[32];
+
+    memset(io_hdr, 0, sizeof(struct sg_io_hdr));
+
+    io_hdr->interface_id = 'S';
+    io_hdr->dxfer_direction = SG_DXFER_FROM_DEV;
+    io_hdr->cmd_len = 16;
+    io_hdr->mx_sb_len = 32;
+    io_hdr->iovec_count = 0;
+    io_hdr->dxfer_len = sectorCount * 512;
+    io_hdr->dxferp = malloc(io_hdr->dxfer_len);
+    io_hdr->cmdp = malloc(io_hdr->cmd_len);
+    io_hdr->sbp = sense_buffer;
 
 
-void FillRead16Command(SCSI_PASS_THROUGH_WITH_BUFFERS* sptwb, DWORD sectorNumber, WORD sectorCount) {
-    // 清零整??构
-    ZeroMemory(sptwb, sizeof(SCSI_PASS_THROUGH_WITH_BUFFERS));
+    io_hdr->cmdp[0] = 0x88; 
+    io_hdr->cmdp[1] = 0x00;
+    io_hdr->cmdp[2] = 0x00;
+    io_hdr->cmdp[3] = 0x00;
+    io_hdr->cmdp[4] = 0x00;
+    io_hdr->cmdp[5] = 0x00;
+    io_hdr->cmdp[6] = 0x00;
+    io_hdr->cmdp[7] = 0x00;
+    io_hdr->cmdp[8] = 0x00;
+    io_hdr->cmdp[9] = lba;
+    io_hdr->cmdp[10] = 0x00;
+    io_hdr->cmdp[11] = 0x00;
+    io_hdr->cmdp[12] = 0x00;
+    io_hdr->cmdp[13] = sectorCount;
+    io_hdr->cmdp[14] = 0x00;
+    io_hdr->cmdp[15] = 0x00;
 
-    // ?置 SCSI_PASS_THROUGH_DIRECT ?构的字段
-    sptwb->spt.Length = sizeof(SCSI_PASS_THROUGH_DIRECT);
-    sptwb->spt.PathId = 0;
-    sptwb->spt.TargetId = 1; // 适配器目?ID
-    sptwb->spt.Lun = 0;
-    sptwb->spt.CdbLength = CDB10GENERIC_LENGTH; // 使用 10 字?的 CDB
-    sptwb->spt.SenseInfoLength = 24; // ?留足?大的空?以容? SenseInfo
-    sptwb->spt.DataIn = SCSI_IOCTL_DATA_IN;
-    sptwb->spt.DataTransferLength = sectorCount * 512; // ?据???度，以字???位
-    sptwb->spt.TimeOutValue = 2; // 超?值（以秒??位）
+    // Set transfer length
 
-    // ?置 CDB（Command Descriptor Block）
-    sptwb->spt.Cdb[0] = 0x88; // Read(16) 命令?
-    sptwb->spt.Cdb[1] = 0x10; // 控制字?，例如 FUA（?制更新）
-    
-    // ?置 LBA（???地址）
-    sptwb->spt.Cdb[2] = (BYTE)((sectorNumber >> 24) & 0xFF);
-    sptwb->spt.Cdb[3] = (BYTE)((sectorNumber >> 16) & 0xFF);
-    sptwb->spt.Cdb[4] = (BYTE)((sectorNumber >> 8) & 0xFF);
-    sptwb->spt.Cdb[5] = (BYTE)(sectorNumber & 0xFF);
+}
 
-    // ?置???度
-    sptwb->spt.Cdb[7] = (BYTE)((sectorCount >> 8) & 0xFF);
-    sptwb->spt.Cdb[8] = (BYTE)(sectorCount & 0xFF);
+void FillWrite16Command(struct sg_io_hdr *io_hdr, unsigned int lba, unsigned short sectorCount, const char *userInput) {
+
+    memset(io_hdr, 0, sizeof(struct sg_io_hdr));
+
+    io_hdr->interface_id = 'S';
+    io_hdr->dxfer_direction = SG_DXFER_TO_DEV;
+    io_hdr->cmd_len = 16;
+    io_hdr->mx_sb_len = 32;
+    io_hdr->iovec_count = 0;
+    io_hdr->dxfer_len = sectorCount * 512;
+    io_hdr->dxferp = malloc(io_hdr->dxfer_len);
+    io_hdr->cmdp = malloc(io_hdr->cmd_len);
+
+
+    io_hdr->cmdp[0] = 0x8A; 
+    io_hdr->cmdp[1] = 0x00;
+    io_hdr->cmdp[2] = 0x00;
+    io_hdr->cmdp[3] = 0x00;
+    io_hdr->cmdp[4] = 0x00;
+    io_hdr->cmdp[5] = 0x00;
+    io_hdr->cmdp[6] = 0x00;
+    io_hdr->cmdp[7] = 0x00;
+    io_hdr->cmdp[8] = 0x00;
+    io_hdr->cmdp[9] = lba;
+    io_hdr->cmdp[10] = 0x00;
+    io_hdr->cmdp[11] = 0x00;
+    io_hdr->cmdp[12] = 0x00;
+    io_hdr->cmdp[13] = sectorCount;
+    io_hdr->cmdp[14] = 0x00;
+    io_hdr->cmdp[15] = 0x00;
+    printf("%d\n", userInput[1]);
+    memcpy(io_hdr->dxferp, userInput, io_hdr->dxfer_len);
+    //printf("\n this is userinput： %s\n",userInput);
 }
 
 
-
-void FillWrite16Command(SCSI_PASS_THROUGH_WITH_BUFFERS* sptwb, DWORD sectorNumber, WORD sectorCount) {
-    // 清零整??构
-    ZeroMemory(sptwb, sizeof(SCSI_PASS_THROUGH_WITH_BUFFERS));
-
-    // ?置 SCSI_PASS_THROUGH_DIRECT ?构的字段
-    sptwb->spt.Length = sizeof(SCSI_PASS_THROUGH_DIRECT);
-    sptwb->spt.PathId = 0;
-    sptwb->spt.TargetId = 1; // 适配器目?ID
-    sptwb->spt.Lun = 0;
-    sptwb->spt.CdbLength = CDB10GENERIC_LENGTH; // 使用 10 字?的 CDB
-    sptwb->spt.SenseInfoLength = 24; // ?留足?大的空?以容? SenseInfo
-    sptwb->spt.DataIn = SCSI_IOCTL_DATA_OUT; // ? DataIn 改? DataOut 表示?操作
-    sptwb->spt.DataTransferLength = sectorCount * 512; // ?据???度，以字???位
-    sptwb->spt.TimeOutValue = 2; // 超?值（以秒??位）
-
-    // ?置 CDB（Command Descriptor Block）
-    sptwb->spt.Cdb[0] = 0x8A; // Write(16) 命令?
-    sptwb->spt.Cdb[1] = 0x10; // 控制字?，例如 FUA（?制更新）
-
-    // ?置 LBA（???地址）
-    sptwb->spt.Cdb[2] = (BYTE)((sectorNumber >> 24) & 0xFF);
-    sptwb->spt.Cdb[3] = (BYTE)((sectorNumber >> 16) & 0xFF);
-    sptwb->spt.Cdb[4] = (BYTE)((sectorNumber >> 8) & 0xFF);
-    sptwb->spt.Cdb[5] = (BYTE)(sectorNumber & 0xFF);
-
-    // ?置???度
-    sptwb->spt.Cdb[7] = (BYTE)((sectorCount >> 8) & 0xFF);
-    sptwb->spt.Cdb[8] = (BYTE)(sectorCount & 0xFF);
+int hexCharToInt(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+        return 10 + c - 'a';
+    } else if (c >= 'A' && c <= 'F') {
+        return 10 + c - 'A';
+    } else {
+        return -1; // 非法字符
+    }
 }
 
 
+void hexStringToBinary(const char *hexString, unsigned char *binaryData) {
+    size_t len = strlen(hexString);
+    for (size_t i = 0; i < len; i += 2) {
+        int high = hexCharToInt(hexString[i]);
+        int low = hexCharToInt(hexString[i + 1]);
 
-// Function to handle write operation
-void writeOperation(int lba, int sectorCnt, int data)
-{
-    // Implement your logic for write operation here
-    printf("Performing write operation\n");
-    printf("Starting Logical Block Address: %d\n", lba);
-    printf("Sector Count: %d\n", sectorCnt);
-    printf("Data: %x\n", data);
+        if (high == -1 || low == -1) {
+            fprintf(stderr, "Error: Invalid hex character in input at position %zu: '%c%c'\n", i, hexString[i], hexString[i + 1]);
+            exit(EXIT_FAILURE);
+        }
+
+        binaryData[i / 2] = (high << 4) | low;
+    }
 }
 
-int main(int argc, char *argv[])
-{
-    HANDLE fileHandle = NULL;
-    DWORD accessMode = 0, shareMode = 0, lba = 0;
-    WORD sector = 0; 
-    CHAR string[NAME_COUNT];
-    ULONG errorCode = 0;
 
-    
+int main(int argc, char *argv[]) {
+    struct sg_io_hdr io_hdr;
+    char *operation;
+    unsigned int lba, sector;
+    //const char *userInput;
 
+    const char *hex_data_to_write = argv[8];
 
-    if ((argc < 5) || (argc > 6))
-    {
-        printf("Usage: %s <path> <read/write> --lba <lba> --sector_cnt <sectorCnt> --data <data>\n", argv[0]);
-        return 1;
-    }
+    // if (argc != 9) {
+    //     printf("Usage: %s <path> <read/write> --lba <lba> --sector_cnt <sectorCnt> --data <data>\n", argv[0]);
+    //     return 1;
+    // }
 
-    shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE; // default
-    accessMode = GENERIC_WRITE | GENERIC_READ;      // default
-
-    StringCbPrintf(string, sizeof(string), "\\\\.\\%s", argv[1]);
-    char *operation = argv[2];
+    operation = argv[2];
+    //userInput = argv[8];
 
 
-    if (argc == 7)
-    {
-        if (strcmp(operation, "read") == 0)
-        {
-            shareMode = FILE_SHARE_READ;
-        }
-        else if (strcmp(operation, "write"))
-        {
-            shareMode = FILE_SHARE_WRITE;
-        }
-        else
-        {
-            printf("please try it again");
-        }
-    }
-    if (_stscanf_s(argv[3], _T("%u"), &lba) != 1) {
-        _tprintf(_T("Error parsing lba parameter.\n"));
-        return 1;
-    }
-    
-    if (_stscanf_s(argv[4], _T("%hu"), &sector) != 1) {
-        _tprintf(_T("Error parsing sector parameter.\n"));
-        return 1;
-    }
-
-    /*
-    //設定file handle
-    fileHandle = CreateFile(string,
-                            accessMode,
-                            shareMode,
-                            NULL,
-                            OPEN_EXISTING,
-                            0,
-                            NULL);
-
-    //file handle除錯
-    if (fileHandle == INVALID_HANDLE_VALUE)
-    {
-        errorCode = GetLastError();
-        printf("Error opening %s. Error: %d\n",string, errorCode);
-        PrintError(errorCode);
-        return;
-    }
-
-    */
-    
-    if (strcmp(operation, "read") == 0)
-    {
-        SCSI_PASS_THROUGH_WITH_BUFFERS readCommand;
-        FillRead16Command(&readCommand, lba, sector);
-        if (DeviceIoControl(fileHandle,
-                        IOCTL_SCSI_PASS_THROUGH,
-                        &readCommand,
-                        sizeof(SCSI_PASS_THROUGH_WITH_BUFFERS),
-                        &readCommand,
-                        sizeof(SCSI_PASS_THROUGH_WITH_BUFFERS),
-                        NULL,
-                        NULL)) {
-        _tprintf(_T("SCSI command sent successfully.\n"));
-        else {
-            DWORD errorCode = GetLastError();
-            _tprintf(_T("Error sending SCSI command. Error: %d\n"), errorCode);
-            PrintError(errorCode);
-        }
 
 
-    }
-    else if (strcmp(operation, "write") == 0)
-    {
-        SCSI_PASS_THROUGH_WITH_BUFFERS writeCommand;
-        FillWrite16Command(&writeCommand, lba, sector);
-        if (DeviceIoControl(fileHandle,
-                            IOCTL_SCSI_PASS_THROUGH,
-                            &writeCommand,
-                            sizeof(SCSI_PASS_THROUGH_WITH_BUFFERS),
-                            &writeCommand,
-                            sizeof(SCSI_PASS_THROUGH_WITH_BUFFERS),
-                            NULL,
-                            NULL)) {
-            _tprintf(_T("Write(16) command sent successfully.\n"));
-    }
-    else
-    {
+    // printf("%s \n",operation);
+    // printf("%s \n",argv[1]);
+    // printf("%s \n",argv[3]);
+    // printf("%s \n",argv[4]);
+    // printf("%s \n",argv[5]);
+    // printf("%s \n",argv[6]);
+
+    // if (userInput == NULL) {
+    //     printf("Error: Missing data parameter.\n");
+    //     return 1;
+    // }
+
+    if (strcmp(operation, "read") != 0 && strcmp(operation, "write") != 0) {
         printf("Invalid operation. Use 'read' or 'write'\n");
         return 1;
     }
+    
+    if (sscanf(argv[4], "%u", &lba) != 1) {
+        printf("%s",argv[4]);
+        printf("Error parsing lba parameter.\n");
+        return 1;
+    }
+
+    if (sscanf(argv[6], "%u", &sector) != 1) {
+        printf("Error parsing sector parameter.\n");
+        return 1;
+    }
+    
+    int fileDescriptor = open(argv[1], O_RDWR);
+    if (fileDescriptor < 0) {
+        perror("Error opening file");
+        return 1;
+    }
+    
+    if (strcmp(operation, "read") == 0) {
+        printf("read operating start\n");
+        printf("read parameter lba: %d\n",lba);
+        printf("read parameter sector: %d\n",sector);
+        FillRead16Command(&io_hdr, lba, sector);
+        io_hdr.timeout = 10000; 
+
+        if (ioctl(fileDescriptor, SG_IO, &io_hdr) < 0) {
+            perror("Error sending SCSI command");
+            close(fileDescriptor);
+        return 1;
+        }
+
+        if ((io_hdr.info & SG_INFO_OK_MASK) != SG_INFO_OK) {
+            fprintf(stderr, "SCSI command failed\n");
+
+        // Print sense buffer information (if available)
+        if (io_hdr.sb_len_wr > 0) {
+            fprintf(stderr, "Sense buffer: ");
+            for (unsigned int i = 0; i < io_hdr.sb_len_wr; i++) {
+                fprintf(stderr, "%02X ", ((unsigned char *)io_hdr.sbp)[i]);
+            }
+            fprintf(stderr, "\n");
+        }
+
+        close(fileDescriptor);
+        return 1;
+        }
+
+    //char *readData = (char *)io_hdr.dxferp;
+
+    unsigned char *readData = (unsigned char *)io_hdr.dxferp;
+
+    // Print the read data
+    printf("Read Data:\n");
+    for (int i = 0; i < io_hdr.dxfer_len; i++) {
+        printf("%02X ", readData[i]);
+        if ((i + 1) % 16 == 0) {
+            printf("\n");
+        }
+    }
+
+        goto end;
+
+    } else if (strcmp(operation, "write") == 0) {
+
+    size_t binary_data_size = strlen(hex_data_to_write) / 2;
+    unsigned char *binary_data = malloc(binary_data_size);
+
+    hexStringToBinary(hex_data_to_write, binary_data);
+        FillWrite16Command(&io_hdr, lba, sector, binary_data);
+        // Implement logic to send the SCSI write command and handle the result
+        io_hdr.timeout = 10000;
+        printf("user input %s\n", binary_data);
+
+        if (ioctl(fileDescriptor, SG_IO, &io_hdr) < 0) {
+            perror("Error sending SCSI command");
+            close(fileDescriptor);
+            return 1;
+        }
+        
+        if ((io_hdr.info & SG_INFO_OK_MASK) != SG_INFO_OK) {
+            fprintf(stderr, "SCSI command failed\n");
+
+            // Print sense buffer information (if available)
+            if (io_hdr.sb_len_wr > 0) {
+                fprintf(stderr, "Sense buffer: ");
+                for (unsigned int i = 0; i < io_hdr.sb_len_wr; i++) {
+                    fprintf(stderr, "%02X ", ((unsigned char *)io_hdr.sbp)[i]);
+                }
+                fprintf(stderr, "\n");
+            }
+                    
+            close(fileDescriptor);
+            return 1;
+            
+        }
+        if (io_hdr.status) {
+            fprintf(stderr, "SCSI command failed with status 0x%x\n", io_hdr.status);
+        }else {
+        printf("SCSI WRITE(16) command sent successfully\n");
+    }
+
+    
+    }
+    end:
+    free(io_hdr.dxferp);
+    free(io_hdr.cmdp);
+    close(fileDescriptor);
 
     return 0;
 }
